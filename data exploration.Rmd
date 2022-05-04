@@ -1,0 +1,71 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+start by importing the drybean dataset
+```{r}
+library("readxl")
+dry_bean = read_excel("Dry_Bean_Dataset.xlsx")
+```
+```{r}
+print(names(dry_bean))
+print(dim(dry_bean))
+```
+
+```{r}
+head(dry_bean)
+```
+
+potential problems: different units ie probabily need to normalize, correltion between features may influence the outcome of the algorithm in an undesired way, continuous and discrete features may lead to problems (when discretisize how?: equalfreq, equalwidth)
+
+split data 70/30 randomly
+```{r}
+indices = 1:nrow(dry_bean)
+training_indices = round(dim(dry_bean)[1]*0.7)
+training_indices = sample(0:nrow(dry_bean), training_indices, replace=FALSE)
+```
+
+
+```{r}
+`%notin%` <- Negate(`%in%`)
+dry_bean_training = dry_bean[row.names(dry_bean) %in% training_indices, ]
+dry_bean_test = dry_bean[row.names(dry_bean) %notin% training_indices, ]
+```
+
+```{r}
+nrow(dry_bean_training)+nrow(dry_bean_test)==nrow(dry_bean)
+```
+
+feature selection with mutual information
+```{r}
+library(infotheo)
+dry_bean_training_disc = discretize(dry_bean_training,"equalwidth")
+dry_bean_test_disc = discretize(dry_bean_test, "equalwidth")
+dry_bean[,17]
+```
+
+```{r}
+db_mi = array(data = NA, dim = 17, dimname = NULL)
+for (i in 1:17){
+  db_mi[i] = mutinformation(dry_bean_disc[,i], dry_bean_disc[,17])
+}
+barplot(db_mi)
+```
+
+```{r}
+df_mi = data.frame(db_mi)
+df_mi$features = names(dry_bean)
+df_mi
+```
+
+```{r}
+df_mi = df_mi[order(df_mi$db_mi, decreasing = TRUE),]
+df_mi
+```
+
+```{r}
+feature_sel = df_mi$features[1:10]
+feature_sel
+```
+
