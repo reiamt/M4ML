@@ -6,6 +6,7 @@ output: html_notebook
 start by importing the drybean dataset
 ```{r}
 library("readxl")
+set.seed(2022)
 dry_bean = read_excel("Dry_Bean_Dataset.xlsx")
 ```
 ```{r}
@@ -37,35 +38,108 @@ dry_bean_test = dry_bean[row.names(dry_bean) %notin% training_indices, ]
 nrow(dry_bean_training)+nrow(dry_bean_test)==nrow(dry_bean)
 ```
 
-feature selection with mutual information
+4. feature selection with mutual information
 ```{r}
 library(infotheo)
 dry_bean_training_disc = discretize(dry_bean_training,"equalwidth")
-dry_bean_test_disc = discretize(dry_bean_test, "equalwidth")
-dry_bean[,17]
-```
 
-```{r}
-db_mi = array(data = NA, dim = 17, dimname = NULL)
+# mutual information based on whole dataset or just on training dataset or doesnt matter?
+db_mi = array(data = NA, dim = 17)
 for (i in 1:17){
-  db_mi[i] = mutinformation(dry_bean_disc[,i], dry_bean_disc[,17])
+  db_mi[i] = mutinformation(dry_bean_training_disc[,i], dry_bean_training_disc[,17])
 }
-barplot(db_mi)
-```
 
-```{r}
+#store mi in dataframe with feature names
 df_mi = data.frame(db_mi)
 df_mi$features = names(dry_bean)
-df_mi
-```
 
-```{r}
+#sort dataframe and select the 10 features with the highest mutual information
 df_mi = df_mi[order(df_mi$db_mi, decreasing = TRUE),]
-df_mi
+feature_sel_10 = df_mi$features[2:11]
+```
+
+5. classifier
+knn
+```{r}
+#normalize data
+dry_bean_training_10 = dry_bean_training[,feature_sel_10]
+
+normal = function(x){
+  return((x-min(x))/(max(x)-min(x)))
+}
+dry_bean_training_10 = lapply(dry_bean_training_10, normal)
+dry_bean_training_10 = data.frame(dry_bean_training_10)
+#dry_bean_training_10$Class = dry_bean_training$Class
 ```
 
 ```{r}
-feature_sel = df_mi$features[1:10]
-feature_sel
+#prepare test set
+dry_bean_test_10 = dry_bean_test[,feature_sel_10]
+dry_bean_test_10 = lapply(dry_bean_test_10, normal)
+dry_bean_test_10 = data.frame(dry_bean_test_10)
+#dry_bean_test_10$Class = dry_bean_test$Class
 ```
+
+```{r}
+#run knn and calculate performance metrics
+library(class)
+db_knn = knn(dry_bean_training_10,dry_bean_test_10,dry_bean_training$Class)
+db_knn_acc = sum(db_knn == dry_bean_test$Class)/nrow(dry_bean_test)
+```
+
+
+```{r}
+#calculate TP, FP, TN, FN for all bean classes
+db_classes = data.frame(unique(dry_bean_test$Class))
+db_perf = data.frame(db_knn, dry_bean_test$Class)
+db_TP = numeric(0)
+db_FP = numeric(0)
+db_TN = numeric(0)
+db_FN = numeric(0)
+i=1
+
+for (db_class in db_classes$db_classes){
+  #TP (seker predicted and was seker)
+  db_TP[i] = sum(db_perf[db_perf$dry_bean_test.Class == db_class,]$db_knn == db_class)
+  #FP (seker predicted but was not seker)
+  db_FP[i] = sum(db_perf[db_perf$dry_bean_test.Class != db_class,]$db_knn == db_class)
+  #TN (not seker predicted and was not seeker)
+  db_TN[i] = sum(db_perf[db_perf$dry_bean_test.Class != db_class,]$db_knn != db_class)
+  #FN (not seker predicted but was seker)
+  db_FN[i] = sum(db_perf[db_perf$dry_bean_test.Class == db_class,]$db_knn != db_class)
+  i = i+1
+}
+
+db_classes$TP = db_TP
+db_classes$FP = db_FP
+db_classes$TN = db_TN
+db_classes$FN = db_FN
+```
+
+```{r}
+#calculate precision, recall and f1 scores for each class
+db_recall = numeric(0)
+db_precision = numeric(0)
+db_f1 = numeric(0)
+i=1
+for (db_class in db_classes$db_classes){
+  #recall (TP/TP+FN)
+  db_recall[i] = db_classes[i,2]/(db_classes[i,2]+db_classes[i,5])
+  #precision (TP/TP+FP)
+  db_precision[i] = db_classes[i,2]/(db_classes[i,2]+db_classes[i,3])
+  #f1 (2*(precision*recall)/(precision+recall))
+  db_f1[i] = 2*(db_recall[i]*db_precision[i])/(db_recall[i]+db_precision[i])
+  i = i+1
+}
+
+db_classes$recall = db_recall
+db_classes$precision = db_precision
+db_classes$f1 = db_f1
+```
+
+```{r}
+mean(db_classes$recall)
+```
+
+
 
