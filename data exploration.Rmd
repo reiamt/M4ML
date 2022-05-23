@@ -19,10 +19,17 @@ print(dim(dry_bean))
 head(dry_bean)
 ```
 
-potential problems: different units ie probabily need to normalize, correlation between features may influence the outcome of the algorithm in an undesired way, continuous and discrete features may lead to problems (when discretisize how?: equalfreq, equalwidth)
 
 split data 70/30 randomly
 ```{r}
+#normalize data, important for ml algorithms later
+normal = function(x){
+  return((x-min(x))/(max(x)-min(x)))
+}
+
+dry_bean_norm = lapply(dry_bean[,1:16], normal)
+dry_bean[,1:16] = data.frame(dry_bean_norm)
+
 #draw randoms samples
 indices = 1:nrow(dry_bean)
 training_indices = round(dim(dry_bean)[1]*0.7)
@@ -38,50 +45,81 @@ nrow(dry_bean_training)+nrow(dry_bean_test)==nrow(dry_bean)
 
 ```
 
+```{r}
+dry_bean_test
+```
+
+
+
+open questions: normalize data before or after mutual information feature selection, only discretisize data for mi calculations for algos use the continuous data
 
 4. feature selection with mutual information
 ```{r}
 library(infotheo)
-dry_bean_training_disc = discretize(dry_bean_training,"equalwidth")
+library(praznik)
 
-# mutual information based on whole dataset or just on training dataset or doesnt matter?
-db_mi = array(data = NA, dim = 17)
-for (i in 1:17){
-  db_mi[i] = mutinformation(dry_bean_training_disc[,i], dry_bean_training_disc[,17])
+feature_selection = function(data, method, n_features, return_scores = FALSE){
+  #takes data and the method to calc the mutual information as input
+  
+  #initialize dataframe to store features and mutual information scores
+  columns = c('features', method)
+  mi_scores = data.frame(matrix(nrow = ncol(data)-1, ncol = length(columns)))
+  colnames(mi_scores) = columns
+  mi_scores$features = names(data)[1:16]
+  features = names(data)[1:16]
+  
+  #discretizise data for mutual information calculations
+  data = discretize(data,"equalwidth", nbins=(nrow(data)^(0.5)))
+  
+  if (method == 'mi'){
+    for (i in 1:16){
+      mi_scores$mi[i] = mutinformation(dry_bean_training_disc[,i],dry_bean_training_disc[,17])
+      mi_scores = mi_scores[order(mi_scores$mi, decreasing = TRUE),]
+    }
+  }
+  
+  if (method == 'jmi'){
+    JMI_tmp = JMI(dry_bean_training_disc[,1:16],dry_bean_training_disc[,17], k=16)
+    rownames(mi_scores) = JMI_tmp$selection
+    for (i in 1:16){
+      mi_scores$jmi[i] = JMI_tmp$score[i]
+      mi_scores$features[i] = features[JMI_tmp$selection[i]]
+    }
+  }
+  
+  if (method == 'cmim'){
+    CMIM_tmp = CMIM(dry_bean_training_disc[,1:16], dry_bean_training_disc[,17], k=16)
+    rownames(mi_scores) = CMIM_tmp$selection
+    for (i in 1:16) {
+      mi_scores$cmim[i] = CMIM_tmp$score[i]
+      mi_scores$features[i] = features[CMIM_tmp$selection[i]]
+    }
+  }
+  
+  #select only the first n_features
+  mi_scores = mi_scores[1:n_features,]
+  
+  #check if one wants also the mi scores returned
+  if (!return_scores){
+    mi_scores = mi_scores$features
+  }
+  
+  return(mi_scores)
 }
-
-#store mi in dataframe with feature names
-df_mi = data.frame(db_mi)
-df_mi$features = names(dry_bean)
-
-#sort dataframe and select the 10 features with the highest mutual information
-df_mi = df_mi[order(df_mi$db_mi, decreasing = TRUE),]
-feature_sel_10 = df_mi$features[2:11]
+selected_features = feature_selection(dry_bean_training, 'mi', 3)
+dry_bean_training_mi = dry_bean_training[,c(selected_features,'Class')]
+dry_bean_test_mi = dry_bean_test[,c(selected_features,'Class')]
 ```
 
 5. classifier
 knn
-```{r}
-#normalize data
-normal = function(x){
-  return((x-min(x))/(max(x)-min(x)))
-}
-
-#prepare training set
-dry_bean_training_10 = dry_bean_training[,feature_sel_10]
-dry_bean_training_10 = lapply(dry_bean_training_10, normal)
-dry_bean_training_10 = data.frame(dry_bean_training_10)
-
-dry_bean_test_10 = dry_bean_test[,feature_sel_10]
-dry_bean_test_10 = lapply(dry_bean_test_10, normal)
-dry_bean_test_10 = data.frame(dry_bean_test_10)
-```
 
 ```{r}
 #run knn and calculate performance metrics
 library(class)
-db_knn = knn(dry_bean_training_10,dry_bean_test_10,dry_bean_training$Class)
+db_knn = knn(dry_bean_training_mi[1:ncol(dry_bean_training_mi)-1],dry_bean_test_mi[1:ncol(dry_bean_test_mi)-1],dry_bean_training$Class)
 knn_perf = calc_perf(db_knn)
+knn_perf
 ```
 
 naive bayes
@@ -91,19 +129,21 @@ library(e1071)
 library(caTools)
 library(caret)
 
-classifier_cl <- naiveBayes(dry_bean_training$Class ~ ., data = dry_bean_training_10)
-db_nb <- predict(classifier_cl, newdata = dry_bean_test_10)
+classifier_cl = naiveBayes(dry_bean_training$Class ~ ., data = dry_bean_training_mi)
+db_nb = predict(classifier_cl, newdata = dry_bean_test_mi)
 
 nb_perf = calc_perf(db_nb)
+nb_perf
 ```
+
 
 6. PCA as feature selection
 ```{r}
-db_pca <- prcomp(dry_bean_training[,1:16], scale = TRUE)
+db_pca <- prcomp(dry_bean_training[1:ncol(dry_bean_training)-1], scale = TRUE)
 
 #db_pca
 var_explained = db_pca$sdev^2 / sum(db_pca$sdev^2)
-sum(var_explained[1:3])
+#sum(var_explained[1:3])
 
 #maybe use plot in report ?
 library(ggplot2)
@@ -126,6 +166,7 @@ db_test_pca = (-1)*db_test_pca$x[,1:3]
 #knn for pcs
 db_pca = knn(db_training_pca,db_test_pca,dry_bean_training$Class)
 pca_perf = calc_perf(db_pca)
+pca_perf
 ```
   
 
@@ -133,13 +174,19 @@ pca_perf = calc_perf(db_pca)
 7. LDA as feature selection
 ```{r}
 library(MASS)
+#not sure if scale necessary since we already normalized in the beginning (?)
 db_training_lda <- data.frame(scale(dry_bean_training[,1:16]))
-lda_model <- lda(dry_bean_training$Class~., data=db_training_lda)
-#dim(lda_model$scaling)
-predict(lda_model)$x
+lda_model_training <- lda(dry_bean_training$Class~., data=db_training_lda)
+lda_training = predict(lda_model_training)$x
+
+db_test_lda = data.frame(scale(dry_bean_test[,1:16]))
+lda_model_test = lda(dry_bean_test$Class~., data = db_test_lda)
+lda_test = predict(lda_model_test)$x
+
+db_lda = knn(lda_training,lda_test,dry_bean_training$Class)
+lda_perf = calc_perf(db_lda)
+lda_perf
 ```
-
-
 
 
 
@@ -250,6 +297,74 @@ backup/unused code
 # mean(db_classes$recall)
 # mean(db_classes$precision)
 # mean(db_classes$f1)
+
+
+
+# 
+# library(infotheo)
+# dry_bean_training_disc = discretize(dry_bean_training,"equalwidth", nbins=nrow(dry_bean)^(0.5))
+# 
+# # mutual information based on whole dataset or just on training dataset or doesnt matter?
+# db_mi = array(data = NA, dim = 17)
+# for (i in 1:17){
+#   db_mi[i] = mutinformation(dry_bean_training_disc[,i], dry_bean_training_disc[,17])
+# }
+# 
+# #store mi in dataframe with feature names
+# df_mi = data.frame(db_mi)
+# df_mi$features = names(dry_bean)
+# 
+# #sort dataframe and select the 10 features with the highest mutual information
+# df_mi = df_mi[order(df_mi$db_mi, decreasing = TRUE),]
+# feature_sel_10 = df_mi$features[2:11]
+# 
+# df_mi
+
+
+
+# feature_selection = function(data, n_features, method){
+#   #initializing the dataframe where the mutual information scores of the features will be saved
+#   columns = c('features','jmi', 'cmim', 'mi')
+#   db_mi = data.frame(matrix(nrow = ncol(data), ncol = length(columns)))
+#   colnames(db_mi) = columns
+#   db_mi$features = names(data)
+#   
+#   #discretizise the dataset for mutual information calculations
+#   data_disc = discretize(data,"equalwidth", nbins=nrow(data)^(0.5))
+#   
+#   #calculate three types of mutual information and save scores in dataframe
+#   for (i in 1:17){
+#     db_mi$jmi[i] = JMI(dry_bean_training_disc[,i], dry_bean_training_disc[,17], k=1)$score
+#     db_mi$cmim[i] = CMIM(dry_bean_training_disc[,i], dry_bean_training_disc[,17], k=1)$score
+#     db_mi$mi[i] = mutinformation(dry_bean_training_disc[,i], dry_bean_training_disc[,17])
+#   }
+#   
+# }
+# 
+# columns = c('features','jmi', 'cmim', 'mi')
+# db_mi_scores = data.frame(matrix(nrow = length(colnames(dry_bean)), ncol = length(columns)))
+# colnames(db_mi_scores) = columns
+# db_mi_scores$features = colnames(dry_bean)
+# 
+# library(praznik)
+# library(infotheo)
+# #discretizise for mutual information calculations
+# dry_bean_training_disc = discretize(dry_bean_training,"equalwidth", nbins=nrow(dry_bean)^(0.5))
+# 
+# for (i in 1:4){
+#   db_mi_scores$jmi[i] = JMI(dry_bean_training_disc[,i], dry_bean_training_disc[,17], k=1)$score
+#   print(JMI(dry_bean_training_disc[,i], dry_bean_training_disc[,17], k=1)$score)
+#   db_mi_scores$cmim[i] = CMIM(dry_bean_training_disc[,i], dry_bean_training_disc[,17], k=1)$score
+#   print(CMIM(dry_bean_training_disc[,i], dry_bean_training_disc[,17], k=1)$score)
+#   db_mi_scores$mi[i] = mutinformation(dry_bean_training_disc[,i], dry_bean_training_disc[,17])
+#   print(mutinformation(dry_bean_training_disc[,i], dry_bean_training_disc[,17]))
+# }
+# 
+# df_mi = db_mi_scores[order(db_mi_scores$mi, decreasing = TRUE),]$mi
+# df_jmi = db_mi_scores[order(db_mi_scores$jmi, decreasing = TRUE),]$jmi
+# df_cmim = db_mi_scores[order(db_mi_scores$cmim, decreasing = TRUE),]$cmim
+# 
+# db_mi_scores
 
 ```
 
